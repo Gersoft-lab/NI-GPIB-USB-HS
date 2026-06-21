@@ -1,0 +1,3 @@
+# Local-only diagnostic probe scripts (contain bench credentials) — never publish
+tools/
+x1key.pub
