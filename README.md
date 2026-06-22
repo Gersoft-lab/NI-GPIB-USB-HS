@@ -26,8 +26,10 @@ If you are using a GPIB-USB-HS with linux-gpib against HP-IB era equipment and s
   `AMIGO status failed`
 
 …then you have a recent-firmware adapter (tested: S/N era of `0x709b` devices) and
-this repository is for you. None of these are bugs in your code, in linux-gpib's
-protocol stack, or in your 40-year-old drive.
+this repository is for you. None of these are bugs in your code or your
+40-year-old drive — the root cause is the adapter's recent firmware, which the
+driver simply doesn't handle yet (a couple of these even bite current mainline
+linux-gpib).
 
 ## What's inside
 
