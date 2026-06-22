@@ -1,10 +1,10 @@
-# NI GPIB-USB-HS firmware quirks — fixes & tools
+# NI GPIB-USB-HS firmware quirks — driver fixes & documentation
 
 Recent firmware revisions of the National Instruments **GPIB-USB-HS** adapter silently
 break communication with vintage HP-IB peripherals — desynchronized transfer pipes,
 malformed responses, broken addressing state and inverted parallel-poll results, none
-of it documented anywhere. This repository documents these firmware quirks, provides
-fixed drivers and the diagnostic tools used to uncover them.
+of it documented anywhere. This repository documents these firmware quirks and
+provides the patched drivers, with the diagnosis behind each fix.
 
 Originally developed to read an **HP 9133XV hard disc from 1983** over USB: HPDir
 identify, info and full byte-perfect duplication now work, validated against a
@@ -81,7 +81,7 @@ symptoms and diagnosis in [`docs/FIRMWARE_QUIRKS.md`](docs/FIRMWARE_QUIRKS.md).
 ## Validation
 
 Three fully independent read paths produce **bit-identical images** (same SHA-256) of
-a 14.5 MB HP 9134XV volume: the Python AMIGO tools over USB, `hpdir -dup` over USB
+a 14.5 MB HP 9134XV volume: a Python AMIGO read path over USB, `hpdir -dup` over USB
 with the patched driver, and an `mfm_util` extraction of the MFM-level source image
 served by a [David Gesswein MFM emulator](https://www.pdp8online.com/mfm/mfm.shtml).
 Identical behaviour confirmed across Ubuntu 14.04 (kernels 3.13 and 4.4,
