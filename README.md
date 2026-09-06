@@ -36,8 +36,8 @@ linux-gpib).
 | Path | Content |
 |---|---|
 | `docs/FIRMWARE_QUIRKS.md` | Full write-up: each quirk, its symptoms, diagnosis and fix |
-| `driver/linux-gpib-4.0.3/` | Patched `ni_usb_gpib.c/.h` for linux-gpib 4.0.3 (validated, kernels 3.13 & 4.4) |
-| `driver/modern/` | Same fixes ported to the current mainline/linux-gpib code base (kernel 7.0) |
+| `driver/linux-gpib-4.0.3/` | Patched `ni_usb_gpib.c/.h` for linux-gpib 4.0.3 (validated, kernels 3.13.0-170 and 4.4.0-148) |
+| `driver/modern/` | Same fixes ported to the current mainline/linux-gpib code base (kernels 7.0.0-14 and 7.0.0-22) |
 
 ## Quick start (Linux)
 
