@@ -82,10 +82,11 @@ symptoms and diagnosis in [`docs/FIRMWARE_QUIRKS.md`](docs/FIRMWARE_QUIRKS.md).
 
 ## Validation
 
-Three fully independent read paths produce **bit-identical images** (same SHA-256) of
-the 14.5 MB hard-disc volume of an HP 9133XV: a Python AMIGO read path over USB, `hpdir -dup` over USB
-with the patched driver, and an `mfm_util` extraction of the MFM-level source image
-served by a [David Gesswein MFM emulator](https://www.pdp8online.com/mfm/mfm.shtml).
+Three fully independent read paths produce **bit-identical images** (same SHA-256)
+of the 14.5 MB hard-disc volume of an HP 9133XV: a Python AMIGO read path over USB,
+`hpdir -dup` over USB with the patched driver, and an `mfm_util` extraction of the
+MFM-level source image served by a
+[David Gesswein MFM emulator](https://www.pdp8online.com/mfm/mfm.shtml).
 Identical behaviour confirmed across Ubuntu 14.04 (kernels 3.13 and 4.4,
 linux-gpib 4.0.3) and Ubuntu 26.04 (kernel 7.0, linux-gpib 4.3.7 with the
 `driver/modern` port).
