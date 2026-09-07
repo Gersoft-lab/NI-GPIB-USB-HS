@@ -1,12 +1,12 @@
-# NI GPIB-USB-HS (USB `3923:709b`) — linux-gpib driver fixes for HP-IB drives and HPDir
+# NI GPIB-USB-HS clone (USB `3923:709b`) — linux-gpib driver fixes for HP-IB drives and HPDir
 
-The National Instruments **GPIB-USB-HS** adapter (USB `3923:709b`) was not a confirmed
-working transport for HPDir under Linux. Trying it against vintage HP-IB peripherals
-exposed several behaviours of the adapter's firmware that the linux-gpib `ni_usb`
-driver does not handle — desynchronized transfer pipes, malformed responses, broken
-addressing state and inverted parallel-poll results, none of it documented anywhere.
-This repository documents these firmware quirks and provides the patched drivers,
-with the diagnosis behind each fix.
+The **GPIB-USB-HS** adapter (USB `3923:709b`) was not a confirmed working transport
+for HPDir under Linux. Trying it against vintage HP-IB peripherals exposed several
+behaviours of the adapter's firmware that the linux-gpib `ni_usb` driver does not
+handle — desynchronized transfer pipes, malformed responses, broken addressing state
+and inverted parallel-poll results, none of it documented anywhere. This repository
+documents these firmware quirks and provides the patched drivers, with the diagnosis
+behind each fix.
 
 Originally developed to read an **HP 9133XV hard disc from 1983** over USB: HPDir
 identify, info and full byte-perfect duplication now work, validated against a
@@ -15,8 +15,7 @@ known-good TNT4882 PCI setup. Linux is supported today; Windows is being investi
 **The unit tested.** One adapter, identified as follows — if yours matches, this
 repository applies to it:
 
-- USB descriptor (`lsusb -v`): `3923:709b`, `bcdDevice 1.01`, manufacturer
-  `National Instruments`, product `GPIB-USB-HS`
+- USB descriptor (`lsusb -v`): `3923:709b`, `bcdDevice 1.01`, product `GPIB-USB-HS`
 - Label: `M/N GPIB-USB-HS`, `P/N 187965K-01L`
 
 ## Does this sound familiar?

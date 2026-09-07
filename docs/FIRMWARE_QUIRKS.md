@@ -1,9 +1,9 @@
-# NI GPIB-USB-HS (`3923:709b`) firmware quirks — symptoms, diagnosis, fixes
+# NI GPIB-USB-HS clone (`3923:709b`) firmware quirks — symptoms, diagnosis, fixes
 
-This document describes the firmware behaviours of the National Instruments
-GPIB-USB-HS adapter tested here (USB ID `3923:709b`, `bcdDevice 1.01`, label P/N
-`187965K-01L`) that break linux-gpib, how each one manifests, how it was
-diagnosed, and how the drivers in this repository fix it.
+This document describes the firmware behaviours of the GPIB-USB-HS adapter
+tested here (USB ID `3923:709b`, `bcdDevice 1.01`, label P/N `187965K-01L`)
+that break linux-gpib, how each one manifests, how it was diagnosed, and how
+the drivers in this repository fix it.
 
 **Test setup**: HP 9133XV disc unit (AMIGO protocol, hard disc emulated at the
 MFM level by a [David Gesswein emulator](https://www.pdp8online.com/mfm/mfm.shtml),
