@@ -1,8 +1,9 @@
-# NI GPIB-USB-HS recent-firmware quirks — symptoms, diagnosis, fixes
+# NI GPIB-USB-HS (`3923:709b`) firmware quirks — symptoms, diagnosis, fixes
 
-This document describes the firmware behaviours of recent National Instruments
-GPIB-USB-HS adapters (USB ID `3923:709b`) that break linux-gpib, how each one
-manifests, how it was diagnosed, and how the drivers in this repository fix it.
+This document describes the firmware behaviours of the National Instruments
+GPIB-USB-HS adapter tested here (USB ID `3923:709b`, `bcdDevice 1.01`, label P/N
+`187965K-01L`) that break linux-gpib, how each one manifests, how it was
+diagnosed, and how the drivers in this repository fix it.
 
 **Test setup**: HP 9133XV disc unit (AMIGO protocol, hard disc emulated at the
 MFM level by a [David Gesswein emulator](https://www.pdp8online.com/mfm/mfm.shtml),
@@ -54,7 +55,7 @@ followed by `received unexpected termination block`.
 **Mechanism.** The driver appends two register writes (`AUX_HLDI`,
 `AUX_CLEAR_END`) to every data-read request, and the parser expects the
 response to echo a register-write status block (id `0x09`) between the read
-status and the termination block. Recent firmware omits that block — the
+status and the termination block. This adapter omits that block — the
 termination (`04 00 00 00`) directly follows the padding. The parser overruns
 into garbage, the byte count check fails, and a successful read is discarded.
 **The parser in current mainline code has the same problem.**
@@ -74,7 +75,7 @@ shows TACS set right after the addressing command and gone again by the time
 of the write.
 
 **Mechanism.** The library calls "go to standby" (IBGTS) after every
-`send_setup`. On recent firmware, the IBGTS request not only drops ATN — it
+`send_setup`. On this adapter, the IBGTS request not only drops ATN — it
 **wipes the engine's addressing model, and the engine never latches TACS from
 subsequent command bytes again** (not even after IFC). Once one IBGTS has been
 issued, addressed writes are dead until re-enumeration. The same corruption is
@@ -92,7 +93,7 @@ disabled; the TNT4882-PCI reference behaviour is reproduced.)
 `bug: discarded data. actual_bytes_read=170, j=4` — 170 being `0xaa`.
 
 **Mechanism.** The read response carries a "bytes in last data block" byte.
-When the read terminates without END/EOI, recent firmware leaves `0xaa` filler
+When the read terminates without END/EOI, the adapter leaves `0xaa` filler
 there instead of the count. The driver believed it and reported e.g. 170 bytes
 read into a 4-byte user buffer. **Mainline has the same problem.**
 
@@ -107,7 +108,7 @@ response byte is e.g. `0x20`; HPDir loops or times out on its ppoll gates.
 **Mechanism.** The poll executes correctly on the bus, but the result byte in
 the response contains the raw DIO line levels — active low, i.e. a responding
 device reads as a **0** bit — in the HP `DIO(8-A)` orientation. Every
-register-level driver (and older firmware) returns the active-high logical
+register-level driver returns the active-high logical
 byte. Example on a bus with responding drives at addresses 0 and 2:
 raw `0x5f` instead of logical `0xa0`.
 
@@ -117,7 +118,7 @@ layers that remap by address (e.g. HPDir's `-query`) keep working.
 
 **Two hard warnings discovered while working on this path:**
 - The second byte of the rpp request is a poll timeout code in principle, but
-  recent firmware only accepts `0xf0` there. Any other value (we tried `0xf3`)
+  this adapter only accepts `0xf0` there. Any other value (we tried `0xf3`)
   wedges the firmware **beyond the reach of a USB reset** — only a physical
   power cycle of the port recovers it.
 - The rpp request leaves ATN+EOI asserted (IDY state) until the next request
@@ -132,7 +133,7 @@ the device reports a status error afterwards — **yet the data actually
 arrived on the device**. Small command writes (a few bytes) work fine.
 
 **Mechanism.** When a device data write is requested **without EOI
-termination** (`send_eoi = 0`, no EOS), recent firmware executes the GPIB
+termination** (`send_eoi = 0`, no EOS), the adapter executes the GPIB
 transfer — the bytes demonstrably reach the listener — but **never sends its
 completion/status block back on the bulk-in pipe**. The driver waits for a
 response that will never come and times out. Payload size is irrelevant
@@ -143,8 +144,9 @@ status block arrives immediately.
 **Driver-side fix (in this repository's drivers).** Since the transfer
 itself does execute, the driver emulates the missing acknowledgement:
 the first EOI-less data write waits at most 500 ms for the status block
-(healthy firmware answers within milliseconds); if nothing comes back, the
-unit is flagged and all subsequent EOI-less writes return success
+(when the adapter does send one, it arrives well within that window); if
+nothing comes back, the unit is flagged and all subsequent EOI-less writes
+return success
 immediately without waiting. Any straggler response is absorbed by the
 quirk-1 `pipe_dirty` resync machinery. This is what makes **streamed
 writes** usable: HPDir's default streaming `-dup <image> <msus>` restore
@@ -190,8 +192,8 @@ maddeningly tool-dependent.
 HPDir samples a drive's parallel-poll line immediately after addressing it.
 The drive's controller releases its PP line upon being addressed — but it
 takes it a little while (firmware on a Z80-class CPU). Over PCI the poll
-lands ~2 µs after the addressing command, *before* the release: the gate
-passes. Over USB the poll lands one USB round trip later (~4 ms): the line is
+lands microseconds after the addressing command, *before* the release: the gate
+passes. Over USB the poll lands one USB round trip later: the line is
 already released and the gate can never pass. This race is structural; no
 driver change can win it.
 

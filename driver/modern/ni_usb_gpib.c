@@ -29,11 +29,11 @@ static void ni_usb_stop(struct ni_usb_priv *ni_priv);
 
 static DEFINE_MUTEX(ni_usb_hotplug_lock);
 
-/* Skip-ppoll workaround for recent GPIB-USB-HS firmware: when nonzero,
+/* Skip-ppoll workaround: when nonzero,
  * ni_usb_parallel_poll returns this value without touching the bus.
  * Some callers (HPDir) test a drive's PP line microseconds after
- * addressing it -- winnable over PCI (~2 us), structurally lost over USB
- * (~4 ms round trip: the drive has already released its line).  Against
+ * addressing it -- winnable over PCI, structurally lost over USB (one
+ * round trip later the drive has already released its line).  Against
  * an always-ready emulated drive, forcing the response is semantically
  * sound.  Runtime tunable:
  *   echo 32 > /sys/module/ni_usb_gpib/parameters/rpp_force  (drive addr 2, DIO(8-A))
@@ -183,7 +183,7 @@ static int ni_usb_nonblocking_send_bulk_msg(struct ni_usb_priv *ni_priv, void *d
  * When a response was orphaned or misparsed, the firmware's bulk-in queue is
  * shifted and every subsequent transfer reads the wrong reply.  Before the
  * next request goes out, ask the firmware to stop whatever is pending and
- * scoop all stale bulk-in data (recent GPIB-USB-HS firmware quirk).
+ * scoop all stale bulk-in data (firmware quirk 1).
  */
 static void ni_usb_resync_pipe(struct ni_usb_priv *ni_priv)
 {
@@ -306,7 +306,7 @@ static int ni_usb_nonblocking_receive_bulk_msg(struct ni_usb_priv *ni_priv,
 		/*
 		 * Ask the firmware to abort and post its (aborted) response
 		 * now, instead of killing the urb and leaving an orphaned
-		 * response in the bulk-in pipe -- recent GPIB-USB-HS
+		 * response in the bulk-in pipe -- this adapter's
 		 * firmware then serves every subsequent request the
 		 * PREVIOUS request's response (off-by-one desync poisoning
 		 * all following operations).  Mirrors the signal path above.
@@ -557,7 +557,7 @@ static int parse_board_ibrd_readback(const u8 *raw_data, struct ni_usb_status_bl
 		*actual_bytes_read = 0;
 	}
 	if (*actual_bytes_read > j) {
-		/* Quirk of recent GPIB-USB-HS firmware: when a read ends
+		/* Quirk 4: when a read ends
 		 * without END/EOI, the bytes-in-last-block byte contains
 		 * 0xaa filler instead of the count; trusting it overruns the
 		 * caller's buffer (user-space crash).  Clamp to what was
@@ -572,7 +572,7 @@ static int parse_board_ibrd_readback(const u8 *raw_data, struct ni_usb_status_bl
 			       i - 1, (int)raw_data[i - 1]);
 			unexpected = 1;
 		}
-	/* Quirk of recent GPIB-USB-HS firmware: the register-write status
+	/* Quirk 2: the register-write status
 	 * block is omitted from the ibrd response; the termination block
 	 * follows the pad bytes directly.  Accept that layout instead of
 	 * overrunning into garbage (which discarded successful reads). */
@@ -889,7 +889,7 @@ static int ni_usb_write(struct gpib_board *board, u8 *buffer, size_t length,
 	}
 
 	/*
-	 * Quirk 6 (recent firmware): a data write WITHOUT EOI termination is
+	 * Quirk 6: a data write WITHOUT EOI termination is
 	 * executed on the bus (the bytes demonstrably reach the listener) but
 	 * its status block is never sent back.  Once that behaviour has been
 	 * confirmed on this unit, don't wait for an ack that never comes —
@@ -1169,7 +1169,7 @@ static int ni_usb_go_to_standby(struct gpib_board *board)
 
 	if (!ni_priv->bus_interface)
 		return -ENODEV;
-	/* Quirk of recent GPIB-USB-HS firmware: the IBGTS request clears the
+	/* Quirk 3: the IBGTS request clears the
 	 * firmware's addressing model irreversibly (subsequent commands no
 	 * longer latch TACS, every addressed write then fails with
 	 * addressing error 3, surfacing as ENOL).  The library calls gts
@@ -1536,7 +1536,7 @@ static int ni_usb_parallel_poll(struct gpib_board *board, u8 *result)
 		return -ENOMEM;
 
 	out_data[i++] = NIUSB_IBRPP_ID;
-	/* 0xf0 is the only byte recent firmware accepts here (a real timeout
+	/* 0xf0 is the only byte this adapter accepts here (a real timeout
 	 * code wedges it beyond software reset).  The poll's ATN+EOI then
 	 * linger until the next request -- do NOT try to release them
 	 * out-of-band, see the comment in ni_usb_go_to_standby. */
@@ -1580,10 +1580,10 @@ static int ni_usb_parallel_poll(struct gpib_board *board, u8 *result)
 	j += ni_usb_parse_status_block(in_data, &status);
 	if (status.id != NIUSB_IBRPP_ID)	/* response shifted */
 		ni_priv->pipe_dirty = 1;
-	/* Quirk of recent GPIB-USB-HS firmware: the result byte contains raw
-	 * DIO line levels, active low (a responding device reads as 0),
-	 * in the HP DIO(8-A) orientation.  Older firmware and register-level
-	 * drivers return the active-high byte -> invert.  E.g. drives at
+	/* Quirk 5: the result byte contains raw DIO line levels, active
+	 * low (a responding device reads as 0), in the HP DIO(8-A)
+	 * orientation.  Register-level drivers return the active-high
+	 * byte -> invert.  E.g. drives at
 	 * addresses 0 and 2 responding: raw 0x5f -> 0xa0. */
 	*result = (u8)(~in_data[j]);
 	j++;
@@ -2495,7 +2495,7 @@ static int ni_usb_attach(struct gpib_board *board, const struct gpib_board_confi
 	/* Drain stale responses possibly left in the bulk-in pipe by an
 	 * earlier desync (orphaned response after a killed urb), so that a
 	 * simple reattach resynchronizes the pipe without a physical
-	 * replug (recent GPIB-USB-HS firmware quirk). */
+	 * replug (firmware quirk 1). */
 	{
 		u8 *scratch;
 		int drained, n;

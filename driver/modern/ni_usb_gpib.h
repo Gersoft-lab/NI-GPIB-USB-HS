@@ -75,8 +75,8 @@ struct ni_usb_priv {
 	struct mutex addressed_transfer_lock;	// protect transfer lock
 	/* set whenever a response was orphaned or misparsed (killed urb,
 	 * shifted status id, bogus count): the next bulk-out first stops the
-	 * firmware and drains the bulk-in pipe to resynchronize (recent
-	 * GPIB-USB-HS firmware quirk). */
+	 * firmware and drains the bulk-in pipe to resynchronize (firmware
+	 * quirk 1). */
 	int pipe_dirty;
 	/* quirk 6: once it is established that this unit's firmware never
 	 * acknowledges data writes lacking EOI termination (although it does

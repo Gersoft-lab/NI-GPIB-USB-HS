@@ -81,7 +81,7 @@ typedef struct
 	struct mutex interrupt_transfer_lock;
 	/* Backport from modern linux-gpib: serializes the send+receive bulk
 	 * transaction pairs of addressed transfers, so their responses cannot
-	 * get crossed (bulk-in pipe desync seen on recent GPIB-USB-HS fw). */
+	 * get crossed (bulk-in pipe desync, quirk 1). */
 	struct mutex addressed_transfer_lock;
 	/* set whenever a response was orphaned or misparsed (killed urb,
 	 * shifted status id, bogus count) : the next bulk-out first stops the

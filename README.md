@@ -1,14 +1,23 @@
-# NI GPIB-USB-HS firmware quirks — driver fixes & documentation
+# NI GPIB-USB-HS (USB `3923:709b`) — linux-gpib driver fixes for HP-IB drives and HPDir
 
-Recent firmware revisions of the National Instruments **GPIB-USB-HS** adapter silently
-break communication with vintage HP-IB peripherals — desynchronized transfer pipes,
-malformed responses, broken addressing state and inverted parallel-poll results, none
-of it documented anywhere. This repository documents these firmware quirks and
-provides the patched drivers, with the diagnosis behind each fix.
+The National Instruments **GPIB-USB-HS** adapter (USB `3923:709b`) was not a confirmed
+working transport for HPDir under Linux. Trying it against vintage HP-IB peripherals
+exposed several behaviours of the adapter's firmware that the linux-gpib `ni_usb`
+driver does not handle — desynchronized transfer pipes, malformed responses, broken
+addressing state and inverted parallel-poll results, none of it documented anywhere.
+This repository documents these firmware quirks and provides the patched drivers,
+with the diagnosis behind each fix.
 
 Originally developed to read an **HP 9133XV hard disc from 1983** over USB: HPDir
 identify, info and full byte-perfect duplication now work, validated against a
 known-good TNT4882 PCI setup. Linux is supported today; Windows is being investigated.
+
+**The unit tested.** One adapter, identified as follows — if yours matches, this
+repository applies to it:
+
+- USB descriptor (`lsusb -v`): `3923:709b`, `bcdDevice 1.01`, manufacturer
+  `National Instruments`, product `GPIB-USB-HS`
+- Label: `M/N GPIB-USB-HS`, `P/N 187965K-01L`
 
 ## Does this sound familiar?
 
@@ -25,9 +34,9 @@ If you are using a GPIB-USB-HS with linux-gpib against HP-IB era equipment and s
 - HPDir reporting `AMIGO identify returns $FFFF`, `ppoll timeout` or
   `AMIGO status failed`
 
-…then you have a recent-firmware adapter (tested: S/N era of `0x709b` devices) and
-this repository is for you. None of these are bugs in your code or your
-40-year-old drive — the root cause is the adapter's recent firmware, which the
+…then your adapter behaves like the unit tested here (see *The unit tested* above),
+and this repository is for you. None of these are bugs in your code or your
+40-year-old drive — the root cause is the adapter's firmware behaviour, which the
 driver simply doesn't handle yet (a couple of these even bite current mainline
 linux-gpib).
 
@@ -46,7 +55,7 @@ linux-gpib).
 2. `/etc/gpib.conf`: set your controller address (`pad = 21` for HP hosts),
    `master = yes`, and — important — **`set-reos = no`** (REOS silently truncates
    board-level reads at any data byte matching the EOS character; HP-IB data is
-   full of them) and **`set-eot = yes`** (recent firmware never acknowledges data
+   full of them) and **`set-eot = yes`** (this adapter never acknowledges data
    writes that don't end with EOI — quirk 6 — although the data does land).
 3. (Re)initialize the adapter cleanly — a software replug via
    `USBDEVFS_RESET` (rmmod → USB reset ioctl → modprobe → `gpib_config`) avoids
@@ -63,8 +72,8 @@ linux-gpib).
    ```
 
    `rpp_force` exists because HPDir samples the drive's parallel-poll line
-   microseconds after addressing it — a race that PCI adapters win and USB
-   round-trips (~4 ms) structurally cannot. Against an instantly-ready drive
+   microseconds after addressing it — a race that PCI adapters win and a USB
+   round trip structurally cannot. Against an instantly-ready drive
    (e.g. an MFM-emulated one) forcing the response is semantically sound.
    Set it back to `0` for real polls.
 

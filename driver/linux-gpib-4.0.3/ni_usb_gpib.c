@@ -39,13 +39,13 @@ static void ni_usb_stop(ni_usb_private_t *ni_priv);
 
 static DEFINE_MUTEX(ni_usb_hotplug_lock);
 
-/* Skip-ppoll (idee d'Anders, fil VintHPcom) : quand != 0, ni_usb_parallel_poll
- * renvoie cette valeur sans toucher le bus.  Contourne une course perdue
- * d'avance en USB : HPDir teste la ligne PP du drive ~us apres l'adressage
- * (gagnable en PCI), mais l'aller-retour USB met ~4 ms et le drive a deja
- * relache sa ligne.  Sur un drive emule (Gesswein) toujours pret, forcer
- * "tous prets" (255) est semantiquement correct.  Reglable a chaud :
- * echo 255 | sudo tee /sys/module/ni_usb_gpib/parameters/rpp_force */
+/* Skip-ppoll workaround: when nonzero, ni_usb_parallel_poll returns this
+ * value without touching the bus.  HPDir tests a drive's PP line
+ * microseconds after addressing it -- winnable over PCI, structurally lost
+ * over USB (one round trip later the drive has already released its line).
+ * Against an always-ready emulated drive (Gesswein), forcing the response
+ * is semantically sound.  Runtime tunable (drive at address 2):
+ * echo 32 | sudo tee /sys/module/ni_usb_gpib/parameters/rpp_force */
 static int rpp_force = 0;
 module_param(rpp_force, int, 0644);
 MODULE_PARM_DESC(rpp_force, "forced parallel poll response (0 = real poll)");
@@ -590,7 +590,7 @@ int parse_board_ibrd_readback(const uint8_t *raw_data, struct ni_usb_status_bloc
 				__FILE__, __FUNCTION__, i - 1, (int)raw_data[i - 1]);
 			unexpected = 1;
 		}
-	/* Quirk: recent GPIB-USB-HS firmware omits the register-write status
+	/* Quirk 2: the adapter omits the register-write status
 	 * block in the ibrd response; the termination block follows the pad
 	 * bytes directly.  Accept that layout instead of overrunning into
 	 * garbage (which made ni_usb_read discard a successful read). */
@@ -915,7 +915,7 @@ static int ni_usb_write(gpib_board_t *board, uint8_t *buffer, size_t length, int
 		return retval;
 	}
 	ni_priv->wrote_since_rpp = 1;
-	/* quirk 6 (recent firmware): a data write WITHOUT EOI termination is
+	/* quirk 6: a data write WITHOUT EOI termination is
 	 * executed on the bus (the bytes demonstrably reach the listener) but
 	 * its status block is never sent back.  Once that behaviour has been
 	 * confirmed on this unit, don't wait for an ack that never comes. */
@@ -1273,7 +1273,7 @@ int ni_usb_go_to_standby(gpib_board_t *board)
 	int i = 0;
 	struct ni_usb_status_block status;
 
-	/* Firmware quirk (recent GPIB-USB-HS): the IBGTS request clears the
+	/* Quirk 3: the IBGTS request clears the
 	 * firmware's addressing state (TACS/LACS observed dropping from the
 	 * status block), so any board write right after addressing fails with
 	 * addressing error 3.  A chip-level AUX_GTS here breaks writes too
@@ -1646,7 +1646,7 @@ static int ni_usb_parallel_poll_epp(gpib_board_t *board, uint8_t *result)
 			__FILE__, __FUNCTION__, retval);
 		return retval;
 	}
-	/* the poll itself takes ~2 us; the USB round trip above dwarfs it */
+	/* the USB round trip above dwarfs the poll itself */
 	out_data_length = 0x20;
 	out_data = kmalloc(out_data_length, GFP_KERNEL);
 	if(out_data == NULL) return -ENOMEM;
@@ -1766,8 +1766,8 @@ int ni_usb_parallel_poll(gpib_board_t *board, uint8_t *result)
 	j += ni_usb_parse_status_block(in_data, &status);
 	/* fw quirk: the result byte contains raw DIO line levels, active-low
 	 * AND bit-mirrored (DIO1 in bit 7) — e.g. drives at addresses 0 and 2
-	 * responding read as raw 0x5f.  Standard convention (older firmware,
-	 * register-level drivers, hpdir): active-high, DIO1 in bit 0, i.e.
+	 * responding read as raw 0x5f.  Standard convention (register-level
+	 * drivers, hpdir): active-high, DIO1 in bit 0, i.e.
 	 * device at address A asserts bit (1 << A).  raw 0x5f -> 0x05. */
 	/* fw quirk: raw DIO line levels, active low (a responding device reads
 	 * as 0).  Invert only — callers (hpdir) use the HP DIO(8-A) bit
@@ -1784,8 +1784,8 @@ int ni_usb_parallel_poll(gpib_board_t *board, uint8_t *result)
 	kfree(in_data);
 	ni_usb_soft_update_status(board, status.ibsta, 0);
 	/* The firmware holds the poll's IDY (ATN+EOI) until the NEXT request
-	 * arrives — milliseconds on USB vs 2 us on PCI.  An AMIGO drive that
-	 * has a response pending ABORTS it when it sees such an endless
+	 * arrives — milliseconds on USB versus microseconds on PCI.  An AMIGO
+	 * drive that has a response pending ABORTS it when it sees such an endless
 	 * parallel poll (hpdir's status read then gets 1 byte of 0x00).
 	 * Terminate the IDY quickly with the one benign request type that
 	 * never corrupted the engine: a register READ (BSR, as line_status
