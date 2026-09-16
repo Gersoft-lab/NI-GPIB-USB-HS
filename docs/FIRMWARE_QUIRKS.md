@@ -122,8 +122,9 @@ layers that remap by address (e.g. HPDir's `-query`) keep working.
   wedges the firmware **beyond the reach of a USB reset** — only a physical
   power cycle of the port recovers it.
 - The rpp request leaves ATN+EOI asserted (IDY state) until the next request
-  arrives. Do not try to release them out of band — see quirk 3. The lingering
-  IDY is mostly harmless… except for the race below.
+  arrives. Do not try to release them out of band — see quirk 3. Measured
+  consequences: none — every real-poll run of this validation, up to a full
+  disc image restore, completed normally with it.
 
 ## Quirk 6 — data writes without EOI never get their completion response
 
@@ -187,40 +188,14 @@ maddeningly tool-dependent.
 
 **Fix: `set-reos = no`** in `/etc/gpib.conf`.
 
-### The ppoll-after-addressing race (why HPDir needs `rpp_force` over USB)
-
-HPDir samples a drive's parallel-poll line immediately after addressing it.
-The drive's controller releases its PP line upon being addressed — but it
-takes it a little while (firmware on a Z80-class CPU). Over PCI the poll
-lands microseconds after the addressing command, *before* the release: the gate
-passes. Over USB the poll lands one USB round trip later: the line is
-already released and the gate can never pass. This race is structural; no
-driver change can win it.
-
-**Workaround:** the `rpp_force` module parameter (the "skip ppoll" idea
-suggested by Anders on the VintHPcom list, implemented driver-side so
-applications need no change):
-
-```sh
-echo 32 | sudo tee /sys/module/ni_usb_gpib/parameters/rpp_force  # 0x80 >> drive address
-echo 0  | sudo tee /sys/module/ni_usb_gpib/parameters/rpp_force  # back to real polls
-```
-
-Against an instantly-ready drive (an MFM-emulated unit, or any healthy drive
-in a read workflow) a forced "ready" answer is semantically sound.
-One operational note for AMIGO drives: clear the drive's DSJ before starting
-HPDir (a single Request Status exchange does it) — with a pending DSJ=1,
-HPDir takes its "Amigo clear" path whose gate waits for a line *release*,
-which a forced constant can never satisfy.
-
 ### Software replug
 
 Most wedge states (including everything quirk 1 produces, and the
 rmmod/modprobe reload dance) are fully cleared by a USB port reset — the
 `USBDEVFS_RESET` ioctl, no cable touching required. The reliable sequence is
 rmmod → `USBDEVFS_RESET` ioctl on the adapter's `/dev/bus/usb/...` node →
-modprobe → `gpib_config`. The only state it cannot clear is the deep wedge
-caused by a non-`0xf0` rpp timeout byte (see quirk 5).
+modprobe → `gpib_config`. It does not clear the deep wedge caused by a
+non-`0xf0` rpp timeout byte (see quirk 5).
 
 ---
 
@@ -237,9 +212,8 @@ caused by a non-`0xf0` rpp timeout byte (see quirk 5).
    a pending power-on DSJ) before anything board-level.
 5. Read: a buffered-read loop (seek then auto-incrementing reads, one DSJ per
    sector) images the full disc; or `hpdir -dup 702: disc.hpi`.
-6. HPDir: `rpp_force` as above, then `hpdir -info 702:`,
-   `hpdir -dup 702: disc.hpi` (note: plain target filename — an absolute path
-   is parsed as an msus).
+6. HPDir: `hpdir -info 702:`, then `hpdir -dup 702: disc.hpi` (note: plain
+   target filename — an absolute path is parsed as an msus).
 
 **Validation result on the reference bench:** three fully independent read
 paths produce bit-identical 14.5 MB images (same SHA-256) — a Python AMIGO
@@ -256,22 +230,18 @@ emulated drive, twice over:
   writes relying on the driver's quirk-6 ack emulation): same image, ~10
   minutes (~90 records/s), read-back SHA-256 identical to the source.
 
-Single-sector write/read-back with a known pattern confirms reversibility on a
-real mechanical drive.
+On a **mechanical floppy drive**, a whole-image write was run three times in a
+row — the original contents rewritten unchanged, then with one sector replaced
+by a test pattern, then restored — each pass verified by a full read-back.
+All three matched bit for bit, at 25-28 s per pass with zero poll timeouts.
 
-Two HPDir-specific caveats on the write side:
+One HPDir-specific caveat on the write side:
 - `hpdir -dup <file> <msus> -r first,last` does **not** write that block
   range from a file source — the output bears no resemblance to the file
   content (this cost us hours; whatever `-r` means with a file source, it is
-  not "raw range copy"). A full `-dup file msus` without `-r` is a faithful
-  raw copy.
-- `-nostream` (sector-at-a-time) writes through HPDir remain impractically
-  slow over USB (~0.2-0.4 records/s): its per-record pacing waits on
-  parallel-poll behaviour a constant `rpp_force` response cannot satisfy
-  (an experimental `rpp_force_transition` parameter in the 4.0.3 driver,
-  emulating a busy→ready transition after each write, did not unblock it).
-  Use the default streaming mode — it is both correct and fast with the
-  quirk-6 fix.
+  not "raw range copy"). It is reproducible file-to-file with no GPIB adapter
+  in the picture (`dest[n] = src[n*256]`), so it is an HPDir bug rather than a
+  transport one. A full `-dup file msus` without `-r` is a faithful raw copy.
 
 **Real-hardware validation:** the same protocol run against the actual 1983
 MFM mechanism (emulator removed, original drive reconnected) gives the same
@@ -281,9 +251,9 @@ independent MFM-level capture of the same disc taken weeks earlier (the only
 difference being a 4-byte boot timestamp the OS itself had updated in sector 0).
 Zero read errors over 56,730 sectors. Behavioural note: the real drive asserts
 its parallel-poll line only while a response is pending — it does not hold it
-at idle the way the emulator does — but the post-addressing race that motivates
-`rpp_force` (quirk-independent, USB latency) is identical on both, so the
-workaround is needed for real and emulated drives alike.
+at idle the way the emulator does. It makes no measurable difference: fetching
+the drive profile from a mechanical hard disc takes the same 11 polls as from
+the emulator, with no timeouts.
 
 ## How the quirks were isolated
 

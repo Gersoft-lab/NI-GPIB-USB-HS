@@ -29,20 +29,6 @@ static void ni_usb_stop(struct ni_usb_priv *ni_priv);
 
 static DEFINE_MUTEX(ni_usb_hotplug_lock);
 
-/* Skip-ppoll workaround: when nonzero,
- * ni_usb_parallel_poll returns this value without touching the bus.
- * Some callers (HPDir) test a drive's PP line microseconds after
- * addressing it -- winnable over PCI, structurally lost over USB (one
- * round trip later the drive has already released its line).  Against
- * an always-ready emulated drive, forcing the response is semantically
- * sound.  Runtime tunable:
- *   echo 32 > /sys/module/ni_usb_gpib/parameters/rpp_force  (drive addr 2, DIO(8-A))
- *   echo 0  > /sys/module/ni_usb_gpib/parameters/rpp_force  (real polls)
- */
-static int rpp_force;
-module_param(rpp_force, int, 0644);
-MODULE_PARM_DESC(rpp_force, "forced parallel poll response byte (0 = real poll)");
-
 // calculates a reasonable timeout in that can be passed to usb functions
 static inline unsigned long ni_usb_timeout_msecs(unsigned int usec)
 {
@@ -1526,10 +1512,6 @@ static int ni_usb_parallel_poll(struct gpib_board *board, u8 *result)
 
 	if (!ni_priv->bus_interface)
 		return -ENODEV;
-	if (rpp_force) {
-		*result = (u8)rpp_force;
-		return 0;
-	}
 	usb_dev = interface_to_usbdev(ni_priv->bus_interface);
 	out_data = kmalloc(out_data_length, GFP_KERNEL);
 	if (!out_data)

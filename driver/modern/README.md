@@ -3,7 +3,7 @@
 The same fixes forward-ported onto the current mainline-style ni_usb code
 (`drivers/staging/gpib/ni_usb` / recent linux-gpib releases). Quirk 1's
 `addressed_transfer_lock` already exists upstream; this port adds quirks 2-5,
-the `rpp_force` skip-ppoll parameter, the bulk-in pipe hardening
+the bulk-in pipe hardening
 (stop-on-timeout, late-response scoop, attach drain, `pipe_dirty` resync),
 and the lock the parallel-poll request pair was missing even upstream.
 

@@ -95,13 +95,10 @@ typedef struct
 	int last_addressing_len;
 	int address_mode;
 	int hp_sad;
-	/* quirk 6 : une fois constaté que le firmware n'acquitte jamais les
-	 * writes de donnees sans EOI, on emule l'acquittement (le transfert
-	 * s'execute bel et bien sur le bus). */
+	/* quirk 6: once this unit has shown that it never acknowledges an
+	 * EOI-less data write, emulate the acknowledgement (the transfer does
+	 * execute on the bus). */
 	int eoiless_ack_missing;
-	/* diagnostics rpp_force + emulation de transition busy->ready */
-	int rpp_poll_count;
-	int wrote_since_rpp;
 } ni_usb_private_t;
 
 typedef struct

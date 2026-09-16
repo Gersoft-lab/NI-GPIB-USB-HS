@@ -20,7 +20,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/bitrev.h>
 #include "ni_usb_gpib.h"
 #include "gpibP.h"
 #include "nec7210.h"
@@ -32,31 +31,11 @@ MODULE_LICENSE("GPL");
 static struct usb_interface *ni_usb_driver_interfaces[MAX_NUM_NI_USB_INTERFACES];
 
 static int ni_usb_parse_status_block(const uint8_t *buffer, struct ni_usb_status_block *status);
-static int ni_usb_firmware_gts(gpib_board_t *board);
 int ni_usb_command_chunk(gpib_board_t *board, uint8_t *buffer, size_t length, size_t *command_bytes_written);
 static int ni_usb_set_interrupt_monitor(gpib_board_t *board, unsigned int monitored_bits);
 static void ni_usb_stop(ni_usb_private_t *ni_priv);
 
 static DEFINE_MUTEX(ni_usb_hotplug_lock);
-
-/* Skip-ppoll workaround: when nonzero, ni_usb_parallel_poll returns this
- * value without touching the bus.  HPDir tests a drive's PP line
- * microseconds after addressing it -- winnable over PCI, structurally lost
- * over USB (one round trip later the drive has already released its line).
- * Against an always-ready emulated drive (Gesswein), forcing the response
- * is semantically sound.  Runtime tunable (drive at address 2):
- * echo 32 | sudo tee /sys/module/ni_usb_gpib/parameters/rpp_force */
-static int rpp_force = 0;
-module_param(rpp_force, int, 0644);
-MODULE_PARM_DESC(rpp_force, "forced parallel poll response (0 = real poll)");
-
-/* with rpp_force: make the first poll after a data write return 0 (busy),
- * then the forced mask — emulates the busy->ready transition that some
- * tools (e.g. HPDir's write loop) wait for and that a constant forced
- * value can never produce. */
-static int rpp_force_transition = 0;
-module_param(rpp_force_transition, int, 0644);
-MODULE_PARM_DESC(rpp_force_transition, "emulate busy->ready ppoll transition after data writes");
 
 //calculates a reasonable timeout in that can be passed to usb functions
 static inline unsigned long ni_usb_timeout_msecs(unsigned int usec)
@@ -914,7 +893,6 @@ static int ni_usb_write(gpib_board_t *board, uint8_t *buffer, size_t length, int
 		printk("%s: %s: ni_usb_send_bulk_msg returned %i, usb_bytes_written=%i, i=%i\n", __FILE__, __FUNCTION__, retval, usb_bytes_written, i);
 		return retval;
 	}
-	ni_priv->wrote_since_rpp = 1;
 	/* quirk 6: a data write WITHOUT EOI termination is
 	 * executed on the bus (the bytes demonstrably reach the listener) but
 	 * its status block is never sent back.  Once that behaviour has been
@@ -1201,66 +1179,6 @@ int ni_usb_take_control(gpib_board_t *board, int synchronous)
 	printk("NIDBG cac: err=%i ibsta=0x%x\n", status.error_code, status.ibsta);
 	ni_usb_soft_update_status(board, status.ibsta, 0);
 	return retval;
-}
-/* the real firmware IBGTS request — used only after parallel polls to
- * release the IDY state (it wipes the firmware's addressing state, which is
- * then replayed before the next write; see ni_usb_parallel_poll). */
-static int ni_usb_firmware_gts(gpib_board_t *board)
-{
-	int retval;
-	ni_usb_private_t *ni_priv = board->private_data;
-	uint8_t *out_data, *in_data;
-	int out_data_length, in_data_length;
-	int bytes_written = 0, bytes_read = 0;
-	int i = 0;
-	struct ni_usb_status_block status;
-
-	out_data_length = 0x10;
-	out_data = kmalloc(out_data_length, GFP_KERNEL);
-	if(out_data == NULL)
-	{
-		printk("%s: kmalloc failed\n", __FILE__);
-		return -ENOMEM;
-	}
-	out_data[i++] = NIUSB_IBGTS_ID;
-	out_data[i++] = 0x0;
-	out_data[i++] = 0x0;
-	out_data[i++] = 0x0;
-	i += ni_usb_bulk_termination(&out_data[i]);
-	mutex_lock(&ni_priv->addressed_transfer_lock);
-	retval = ni_usb_send_bulk_msg(ni_priv, out_data, i, &bytes_written, 1000);
-	kfree(out_data);
-	if(retval || bytes_written != i)
-	{
-		mutex_unlock(&ni_priv->addressed_transfer_lock);
-		printk("%s: %s: ni_usb_send_bulk_msg returned %i, bytes_written=%i, i=%i\n", __FILE__, __FUNCTION__, retval, bytes_written, i);
-		return retval;
-	}
-	in_data_length = 0x20;
-	in_data = kmalloc(in_data_length, GFP_KERNEL);
-	if(in_data == NULL)
-	{
-		mutex_unlock(&ni_priv->addressed_transfer_lock);
-		printk("%s: kmalloc failed\n", __FILE__);
-		return -ENOMEM;
-	}
-	retval = ni_usb_receive_bulk_msg(ni_priv, in_data, in_data_length, &bytes_read, 1000, 0);
-	mutex_unlock(&ni_priv->addressed_transfer_lock);
-	if(retval || bytes_read != 12)
-	{
-		printk("%s: %s: ni_usb_receive_bulk_msg returned %i, bytes_read=%i\n", __FILE__, __FUNCTION__, retval, bytes_read);
-		kfree(in_data);
-		return retval;
-	}
-	ni_usb_parse_status_block(in_data, &status);
-	kfree(in_data);
-	if(status.id != NIUSB_IBGTS_ID)
-	{
-		printk("%s: %s: status.id 0x%x != IBGTS (pipe shift?)\n", __FILE__, __FUNCTION__, status.id);
-		ni_priv->pipe_dirty = 1;
-	}
-	ni_usb_soft_update_status(board, status.ibsta, 0);
-	return 0;
 }
 
 int ni_usb_go_to_standby(gpib_board_t *board)
@@ -1616,78 +1534,6 @@ void ni_usb_secondary_address(gpib_board_t *board, unsigned int address, int ena
 	ni_usb_soft_update_status(board, ibsta, 0);
 	return; // 0;
 }
-/* The firmware's IBRPP request leaves ATN+EOI asserted (permanent IDY state):
- * a device polled in a loop can never make progress, so e.g. an AMIGO drive
- * never reaches "response ready" and callers (HPDir) poll forever.  Worse,
- * releasing IDY afterwards with AUX_GTS breaks the firmware's addressing
- * state for the next write.  Instead, execute the parallel poll entirely at
- * chip level like the nec7210/tnt4882 drivers do: AUXMR=AUX_EPP runs the
- * hardware-timed IDY pulse and latches the DIO image into CPTR.  No
- * controller state transition, the firmware is none the wiser. */
-static int ni_usb_parallel_poll_epp(gpib_board_t *board, uint8_t *result)
-{
-	int retval;
-	ni_usb_private_t *ni_priv = board->private_data;
-	uint8_t *out_data, *in_data;
-	int out_data_length, in_data_length;
-	int bytes_written = 0, bytes_read = 0;
-	int i = 0;
-	unsigned int cptr_bits = 0;
-	struct ni_usb_register reg;
-	unsigned int reg_ibsta;
-
-	reg.device = NIUSB_SUBDEV_TNT4882;
-	reg.address = nec7210_to_tnt4882_offset(AUXMR);
-	reg.value = AUX_EPP;
-	retval = ni_usb_write_registers(ni_priv, &reg, 1, &reg_ibsta);
-	if(retval)
-	{
-		printk("%s: %s: AUX_EPP register write failed, retval=%i\n",
-			__FILE__, __FUNCTION__, retval);
-		return retval;
-	}
-	/* the USB round trip above dwarfs the poll itself */
-	out_data_length = 0x20;
-	out_data = kmalloc(out_data_length, GFP_KERNEL);
-	if(out_data == NULL) return -ENOMEM;
-	i += ni_usb_bulk_register_read_header(&out_data[i], 1);
-	i += ni_usb_bulk_register_read(&out_data[i], NIUSB_SUBDEV_TNT4882,
-		nec7210_to_tnt4882_offset(CPTR));
-	while(i % 4)
-		out_data[i++] = 0x0;
-	i += ni_usb_bulk_termination(&out_data[i]);
-	mutex_lock(&ni_priv->addressed_transfer_lock);
-	retval = ni_usb_send_bulk_msg(ni_priv, out_data, i, &bytes_written, 1000);
-	kfree(out_data);
-	if(retval || bytes_written != i)
-	{
-		mutex_unlock(&ni_priv->addressed_transfer_lock);
-		printk("%s: %s: ni_usb_send_bulk_msg returned %i, bytes_written=%i, i=%i\n",
-			__FILE__, __FUNCTION__, retval, bytes_written, i);
-		return retval;
-	}
-	in_data_length = 0x20;
-	in_data = kmalloc(in_data_length, GFP_KERNEL);
-	if(in_data == NULL)
-	{
-		mutex_unlock(&ni_priv->addressed_transfer_lock);
-		return -ENOMEM;
-	}
-	retval = ni_usb_receive_bulk_msg(ni_priv, in_data, in_data_length, &bytes_read, 1000, 1);
-	mutex_unlock(&ni_priv->addressed_transfer_lock);
-	if(retval && retval != -ERESTARTSYS)
-	{
-		printk("%s: %s: ni_usb_receive_bulk_msg returned %i, bytes_read=%i\n",
-			__FILE__, __FUNCTION__, retval, bytes_read);
-		kfree(in_data);
-		return retval;
-	}
-	ni_usb_parse_register_read_block(in_data, &cptr_bits, 1);
-	kfree(in_data);
-	*result = cptr_bits & 0xff;
-	printk("NIDBG rpp(epp): result=0x%02x bytes_read=%i\n", *result, bytes_read);
-	return 0;
-}
 
 int ni_usb_parallel_poll(gpib_board_t *board, uint8_t *result)
 {
@@ -1699,24 +1545,6 @@ int ni_usb_parallel_poll(gpib_board_t *board, uint8_t *result)
 	int i = 0;
 	int j = 0;
 	struct ni_usb_status_block status;
-
-	if(rpp_force)
-	{
-		ni_priv->rpp_poll_count++;
-		if(rpp_force_transition && ni_priv->wrote_since_rpp)
-		{
-			ni_priv->wrote_since_rpp = 0;
-			*result = 0;	/* busy : la transition viendra au poll suivant */
-			printk("NIDBG rpp: forced transition busy (poll #%i)\n",
-				ni_priv->rpp_poll_count);
-			return 0;
-		}
-		if((ni_priv->rpp_poll_count % 100) == 1)
-			printk("NIDBG rpp: forced 0x%02x (poll #%i)\n",
-				rpp_force, ni_priv->rpp_poll_count);
-		*result = (uint8_t)rpp_force;
-		return 0;
-	}
 
 	out_data_length = 0x10;
 	out_data = kmalloc(out_data_length, GFP_KERNEL);
@@ -1764,11 +1592,6 @@ int ni_usb_parallel_poll(gpib_board_t *board, uint8_t *result)
 		return retval;
 	}
 	j += ni_usb_parse_status_block(in_data, &status);
-	/* fw quirk: the result byte contains raw DIO line levels, active-low
-	 * AND bit-mirrored (DIO1 in bit 7) — e.g. drives at addresses 0 and 2
-	 * responding read as raw 0x5f.  Standard convention (register-level
-	 * drivers, hpdir): active-high, DIO1 in bit 0, i.e.
-	 * device at address A asserts bit (1 << A).  raw 0x5f -> 0x05. */
 	/* fw quirk: raw DIO line levels, active low (a responding device reads
 	 * as 0).  Invert only — callers (hpdir) use the HP DIO(8-A) bit
 	 * orientation as delivered by register-level drivers: device at
@@ -1783,38 +1606,6 @@ int ni_usb_parallel_poll(gpib_board_t *board, uint8_t *result)
 		ni_priv->pipe_dirty = 1;
 	kfree(in_data);
 	ni_usb_soft_update_status(board, status.ibsta, 0);
-	/* The firmware holds the poll's IDY (ATN+EOI) until the NEXT request
-	 * arrives — milliseconds on USB versus microseconds on PCI.  An AMIGO
-	 * drive that has a response pending ABORTS it when it sees such an endless
-	 * parallel poll (hpdir's status read then gets 1 byte of 0x00).
-	 * Terminate the IDY quickly with the one benign request type that
-	 * never corrupted the engine: a register READ (BSR, as line_status
-	 * does).  IBGTS / take_control / AUXMR / BCR pokes all broke the
-	 * engine's addressing model — do not use them here. */
-	{
-		uint8_t *rr_out, *rr_in;
-		int rr_i = 0;
-		int rr_written = 0, rr_read = 0;
-		int rr_retval;
-
-		rr_out = kmalloc(0x20, GFP_KERNEL);
-		rr_in = kmalloc(0x20, GFP_KERNEL);
-		if(rr_out && rr_in)
-		{
-			rr_i += ni_usb_bulk_register_read_header(&rr_out[rr_i], 1);
-			rr_i += ni_usb_bulk_register_read(&rr_out[rr_i], NIUSB_SUBDEV_TNT4882, BSR);
-			while(rr_i % 4)
-				rr_out[rr_i++] = 0x0;
-			rr_i += ni_usb_bulk_termination(&rr_out[rr_i]);
-			mutex_lock(&ni_priv->addressed_transfer_lock);
-			rr_retval = ni_usb_send_bulk_msg(ni_priv, rr_out, rr_i, &rr_written, 1000);
-			if(rr_retval == 0 && rr_written == rr_i)
-				ni_usb_receive_bulk_msg(ni_priv, rr_in, 0x20, &rr_read, 1000, 0);
-			mutex_unlock(&ni_priv->addressed_transfer_lock);
-		}
-		kfree(rr_out);
-		kfree(rr_in);
-	}
 	return retval;
 }
 void ni_usb_parallel_poll_configure(gpib_board_t *board, uint8_t config)

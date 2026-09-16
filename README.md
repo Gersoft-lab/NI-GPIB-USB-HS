@@ -61,20 +61,12 @@ linux-gpib).
    the physical cable ritual.
 4. Sanity-check an AMIGO drive at address 2 (a DSJ + Request Status exchange);
    this also clears any pending power-on DSJ.
-5. For HPDir: clear the drive's DSJ first (step 4 does it), then enable the
-   skip-ppoll workaround and go:
+5. For HPDir: clear the drive's DSJ first (step 4 does it), then go:
 
    ```sh
-   echo 32 | sudo tee /sys/module/ni_usb_gpib/parameters/rpp_force   # 0x80 >> address
    hpdir -info 702:
    cd /tmp && hpdir -dup 702: mydisc.hpi
    ```
-
-   `rpp_force` exists because HPDir samples the drive's parallel-poll line
-   microseconds after addressing it — a race that PCI adapters win and a USB
-   round trip structurally cannot. Against an instantly-ready drive
-   (e.g. an MFM-emulated one) forcing the response is semantically sound.
-   Set it back to `0` for real polls.
 
 ## The quirks, in one breath
 
@@ -102,10 +94,7 @@ linux-gpib 4.0.3) and Ubuntu 26.04 (kernel 7.0, linux-gpib 4.3.7 with the
 Also validated against the **real 1983 MFM mechanism** (not just the emulator):
 full AMIGO exchange, HPDir identify/info, and complete Python and `hpdir -dup`
 dumps — both byte-identical to each other and to an independent MFM-level capture
-of the same disc, zero read errors. One behavioural difference worth knowing:
-unlike the emulator, the real drive only asserts its parallel-poll line while a
-response is pending (it does not hold it at idle), but the post-addressing race
-that motivates `rpp_force` is identical on both.
+of the same disc, zero read errors.
 
 The **write path** is validated at scale too (on the emulated drive), via two
 independent routes: a full 14.5 MB image restored with EOI-terminated buffered
@@ -120,6 +109,10 @@ write-up for the mechanism.
 - [x] linux-gpib 4.0.3 driver — validated end to end
 - [x] Port to modern code base (linux-gpib 4.3.7 / staging style)
 - [x] Validated on current Ubuntu (26.04, kernel 7.0, linux-gpib 4.3.7)
+- [x] Reads validated on three media: MFM-emulated hard disc, mechanical
+      floppy, mechanical hard disc
+- [x] Whole-image write plus full read-back comparison, byte-identical, on the
+      MFM-emulated hard disc and the mechanical floppy
 - [ ] Upstream submission (linux-gpib / kernel staging)
 - [ ] Windows (NI 488.2 path) — under investigation
 
@@ -129,7 +122,8 @@ write-up for the mechanism.
   and the linux-gpib patches this work builds on
 - **Christian Grosz** — [lif80utils](https://codeberg.org/Boeingflieger/lif80utils),
   whose ppoll-free AMIGO protocol approach showed the way
-- **Anders** (VintHPcom) — the skip-ppoll insight behind `rpp_force`
+- **Anders** (VintHPcom) — for the skip-ppoll discussion that led to
+  measuring the parallel poll
 - **David Gesswein** — the [MFM emulator](https://www.pdp8online.com/mfm/mfm.shtml)
   that provided a healthy, reproducible test drive
 - **Frank Mori Hess** and the [linux-gpib](https://linux-gpib.sourceforge.io/)
