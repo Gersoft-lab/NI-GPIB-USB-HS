@@ -45,6 +45,12 @@ protocol resynchronizes by itself; only re-enumeration used to clear it.
   id or an impossible count; the next outgoing request first performs a
   stop-and-drain resynchronization. The driver self-heals.
 
+**Limitation.** A read addressed to nobody is held by the adapter for about
+15 s, and `NI_USB_STOP_REQUEST` does not end it. With a short timeout (`T1s`)
+the driver gives up first, and the late response makes the next few calls fail
+with `EDVR` until the resynchronization clears it. A timeout of `T10s` or
+longer outlives the adapter and avoids this.
+
 ## Quirk 2 — data-read responses omit the register-write status block
 
 **Symptoms.** A read fails with `EIO` although the device demonstrably answered
